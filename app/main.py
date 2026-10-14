@@ -36,6 +36,11 @@ from app.routes import (
     documents, verifications, bookings, payments, conversations,
     notifications, reviews, ai, seller, projects
 )
+from app.routes import (
+    auth, properties, users, saved_searches, site_visits, offers,
+    documents, verifications, bookings, payments, conversations,
+    notifications, reviews, ai, seller, projects, agent
+)
 
 app = FastAPI(
     title="Real Estate Platform API",
@@ -84,6 +89,11 @@ app.include_router(
     projects.router,
     prefix="/api/projects",
     tags=["Projects (Builder)"]
+)
+app.include_router(
+    agent.router,
+    prefix="/api/agent",
+    tags=["Agent"]
 )
 
 
