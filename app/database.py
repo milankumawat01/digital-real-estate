@@ -34,5 +34,3 @@ lead_collection = database.get_collection("leads")
 commission_collection = database.get_collection("commissions") 
 
 print(f"MongoDB connected successfully! Database: {DATABASE_NAME}")
-lead_collection = database.get_collection("leads")
-commission_collection = database.get_collection("commissions")
