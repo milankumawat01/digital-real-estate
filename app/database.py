@@ -30,7 +30,9 @@ project_collection = database.get_collection("projects")
 tower_collection = database.get_collection("towers")
 floor_collection = database.get_collection("floors")
 unit_collection = database.get_collection("units")
-lead_collection = database.get_collection("leads")            # ← YEH ADD KARO
-commission_collection = database.get_collection("commissions")  # ← YEH ADD KARO
+lead_collection = database.get_collection("leads")           
+commission_collection = database.get_collection("commissions") 
 
 print(f"MongoDB connected successfully! Database: {DATABASE_NAME}")
+lead_collection = database.get_collection("leads")
+commission_collection = database.get_collection("commissions")
