@@ -2,12 +2,26 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from bson import ObjectId
 from datetime import datetime
 import uuid
+import hmac
+import hashlib
+import os
 
 from app.routes.auth import get_current_user
 from app.schemas.payment import PaymentOrderCreate, PaymentVerify, PaymentWebhook
 from app.database import payment_collection, booking_collection
 
 router = APIRouter()
+
+GATEWAY_SECRET = os.getenv("GATEWAY_SECRET", "test_secret_key_for_development")
+
+
+def verify_gateway_signature(order_id: str, payment_id: str, signature: str) -> bool:
+    expected = hmac.new(
+        GATEWAY_SECRET.encode(),
+        f"{order_id}|{payment_id}".encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def payment_serializer(doc) -> dict:
@@ -85,8 +99,18 @@ async def verify_payment(
     if payment.get("buyer_id") != str(current_user["_id"]):
         raise HTTPException(status_code=403, detail="You can only verify your own payment")
 
-    if not payload.signature:
-        raise HTTPException(status_code=400, detail="Signature is required")
+    if payment.get("status") == "paid":
+        return {"payment_id": payload.payment_id, "status": "paid"}
+
+    if payment.get("gateway_order_id") != payload.gateway_order_id:
+        raise HTTPException(status_code=400, detail="Order ID mismatch")
+
+    if not verify_gateway_signature(
+        payload.gateway_order_id,
+        payload.gateway_payment_id,
+        payload.signature
+    ):
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
     now = datetime.utcnow()
     await payment_collection.update_one(
@@ -114,9 +138,38 @@ async def verify_payment(
 
 
 @router.post("/webhook")
-async def payment_webhook(payload: PaymentWebhook, request: Request):
+async def payment_webhook(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature")
+
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing signature header")
+
+    expected = hmac.new(
+        GATEWAY_SECRET.encode(),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
     try:
-        obj_id = ObjectId(payload.payment_id)
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    valid_statuses = ["created", "paid", "failed", "refunded"]
+    status = payload.get("status")
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    payment_id = payload.get("payment_id")
+    if not payment_id:
+        raise HTTPException(status_code=400, detail="Missing payment_id")
+
+    try:
+        obj_id = ObjectId(payment_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid payment ID format")
 
@@ -127,10 +180,10 @@ async def payment_webhook(payload: PaymentWebhook, request: Request):
     now = datetime.utcnow()
     await payment_collection.update_one(
         {"_id": obj_id},
-        {"$set": {"status": payload.status, "updated_at": now}}
+        {"$set": {"status": status, "updated_at": now}}
     )
 
-    if payload.status == "paid":
+    if status == "paid":
         try:
             booking_obj_id = ObjectId(payment["booking_id"])
             await booking_collection.update_one(

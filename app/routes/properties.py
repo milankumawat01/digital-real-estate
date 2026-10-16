@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from bson import ObjectId
 
 from app.database import property_collection
@@ -38,6 +38,27 @@ class PropertyCreate(BaseModel):
     seller_id: str
     status: str
     location: LocationModel = None
+
+
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    property_type: Optional[str] = None
+    city: Optional[str] = None
+    locality: Optional[str] = None
+    address: Optional[str] = None
+    price: Optional[float] = None
+    area: Optional[float] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    floor: Optional[int] = None
+    total_floors: Optional[int] = None
+    furnishing: Optional[str] = None
+    parking: Optional[str] = None
+    amenities: Optional[List[str]] = None
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
+    virtual_tour_url: Optional[str] = None
 
 
 def property_serializer(property) -> dict:
@@ -315,6 +336,7 @@ async def create_property(
 ):
     data = property_data.dict()
     data["seller_id"] = str(current_user["_id"])
+    data["status"] = "pending"
 
     result = await property_collection.insert_one(data)
 
@@ -325,23 +347,33 @@ async def create_property(
     }
 
 
-@router.put("/{property_id}")
+@router.patch("/{property_id}")
 async def update_property(
     property_id: str,
-    property_data: PropertyCreate,
-    current_user: dict = Depends(require_seller),
+    property_data: PropertyUpdate,
+    current_user: dict = Depends(require_seller)
 ):
     try:
         obj_id = ObjectId(property_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid property ID format")
 
-    result = await property_collection.update_one(
-        {"_id": obj_id}, {"$set": property_data.dict()}
-    )
-
-    if result.modified_count == 0:
+    existing = await property_collection.find_one({"_id": obj_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Property not found")
+
+    if existing["seller_id"] != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own properties"
+        )
+
+    update_fields = property_data.dict(exclude_unset=True)
+
+    await property_collection.update_one(
+        {"_id": obj_id},
+        {"$set": update_fields}
+    )
 
     return {"success": True, "message": "Property updated successfully"}
 
@@ -349,17 +381,24 @@ async def update_property(
 @router.delete("/{property_id}")
 async def delete_property(
     property_id: str,
-    current_user: dict = Depends(require_seller),
+    current_user: dict = Depends(require_seller)
 ):
     try:
         obj_id = ObjectId(property_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid property ID format")
 
-    result = await property_collection.delete_one({"_id": obj_id})
-
-    if result.deleted_count == 0:
+    existing = await property_collection.find_one({"_id": obj_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Property not found")
+
+    if existing["seller_id"] != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own properties"
+        )
+
+    await property_collection.delete_one({"_id": obj_id})
 
     return {"success": True, "message": "Property deleted successfully"}
 
