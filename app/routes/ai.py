@@ -52,6 +52,9 @@ async def search_properties_by_filters(filters: dict, limit: int = 10) -> list:
     if filters.get("parking"):
         query["parking"] = {"$regex": "car", "$options": "i"}
 
+    # ✅ Hamesha available properties hi dikhao
+    query["status"] = "available"
+
     results = []
     async for prop in property_collection.find(query).limit(limit):
         results.append(property_serializer(prop))
@@ -120,7 +123,7 @@ async def recommendations(
         "city": base.get("city"),
         "bedrooms": base.get("bedrooms"),
         "price": {"$gte": price_min, "$lte": price_max},
-        "status": "AVAILABLE"
+        "status": "available"
     }
 
     results = []
@@ -131,7 +134,7 @@ async def recommendations(
         fallback_query = {
             "_id": {"$ne": obj_id},
             "city": base.get("city"),
-            "status": "AVAILABLE"
+            "status": "available"
         }
         existing_ids = {p["id"] for p in results}
 

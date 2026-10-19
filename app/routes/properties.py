@@ -7,6 +7,7 @@ from app.database import property_collection
 from app.routes.auth import get_current_user, require_seller
 from app.utils.storage import save_media_file, delete_media_file
 from app.schemas.property import MediaResponse, ComparePropertiesRequest
+from app.schemas.property_status import PropertyStatus
 
 router = APIRouter()
 
@@ -62,6 +63,7 @@ class PropertyUpdate(BaseModel):
 
 
 def property_serializer(property) -> dict:
+    media_list = property.get("media", [])
     return {
         "id": str(property["_id"]),
         "title": property["title"],
@@ -84,6 +86,7 @@ def property_serializer(property) -> dict:
         "virtual_tour_url": property["virtual_tour_url"],
         "seller_id": property["seller_id"],
         "status": property["status"],
+        "media": media_list,
     }
 
 
@@ -122,7 +125,7 @@ async def get_properties(
         query["property_type"] = {"$regex": property_type, "$options": "i"}
 
     if status:
-        query["status"] = status
+        query["status"] = status.lower()
 
     if furnishing:
         query["furnishing"] = {"$regex": furnishing, "$options": "i"}

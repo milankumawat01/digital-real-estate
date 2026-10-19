@@ -3,7 +3,6 @@ from bson import ObjectId
 from datetime import datetime
 import uuid
 import os
-import shutil
 
 from app.routes.auth import get_current_user, require_seller
 from app.schemas.document import DocumentRequestCreate, DocumentStatusUpdate
@@ -22,7 +21,7 @@ ALLOWED_DOC_TYPES = [
     "other"
 ]
 
-MAX_DOC_SIZE = 10 * 1024 * 1024   # 10 MB
+MAX_DOC_SIZE = 10 * 1024 * 1024
 ALLOWED_MIME = ["application/pdf", "image/jpeg", "image/png", "image/jpg"]
 
 
@@ -42,7 +41,6 @@ def document_serializer(doc) -> dict:
     }
 
 
-
 @router.post("/properties/{property_id}/documents")
 async def upload_property_document(
     property_id: str,
@@ -50,61 +48,51 @@ async def upload_property_document(
     document_type: str = Form(...),
     current_user: dict = Depends(require_seller)
 ):
-    """Seller/Builder/Agent uploads a document for a property."""
-    
- 
     try:
         obj_id = ObjectId(property_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid property ID format")
-    
-   
+
     prop = await property_collection.find_one({"_id": obj_id})
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    
-  
+
     if prop.get("seller_id") != str(current_user["_id"]):
         raise HTTPException(
             status_code=403,
             detail="You can only upload documents for your own properties"
         )
-    
-   
+
     if document_type not in ALLOWED_DOC_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid document_type. Allowed: {ALLOWED_DOC_TYPES}"
         )
-    
-   
+
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type. Allowed: {ALLOWED_MIME}"
         )
-    
 
     contents = await file.read()
     if len(contents) > MAX_DOC_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Max {MAX_DOC_SIZE // (1024*1024)} MB"
+            detail=f"File too large. Max {MAX_DOC_SIZE // (1024 * 1024)} MB"
         )
-    
-  
+
     ext = os.path.splitext(file.filename)[1] or ".bin"
     unique_name = f"{uuid.uuid4().hex}{ext}"
     property_doc_folder = os.path.join(DOCUMENT_DIR, property_id)
     os.makedirs(property_doc_folder, exist_ok=True)
-    
+
     file_path = os.path.join(property_doc_folder, unique_name)
     with open(file_path, "wb") as f:
         f.write(contents)
-    
+
     file_url = f"/uploads/documents/{property_id}/{unique_name}"
-    
-   
+
     now = datetime.utcnow()
     doc = {
         "property_id": property_id,
@@ -117,14 +105,13 @@ async def upload_property_document(
         "created_at": now,
         "updated_at": now,
     }
-    
+
     result = await document_collection.insert_one(doc)
-    
+
     return {
         "document_id": str(result.inserted_id),
         "status": "pending"
     }
-
 
 
 @router.get("/properties/{property_id}/documents")
@@ -132,32 +119,25 @@ async def list_property_documents(
     property_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """List documents for a property. Only owner/admin can list."""
-    
     try:
         ObjectId(property_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid property ID format")
-    
-    user_id = str(current_user["_id"])
+
     role = current_user.get("role", "buyer")
-    
     query = {"property_id": property_id}
-    
-    
-    if role not in ["admin"] and role not in ["seller", "builder", "agent"]:
-        # Buyer — return only documents they requested (simplified: return all approved)
+
+    if role not in ["admin", "seller", "builder", "agent"]:
         query["status"] = "approved"
-    
+
     results = []
     async for doc in document_collection.find(query).sort("created_at", -1):
         results.append(document_serializer(doc))
-    
+
     return {
         "count": len(results),
         "results": results
     }
-
 
 
 @router.get("/documents/{document_id}")
@@ -165,34 +145,31 @@ async def get_document_status(
     document_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Get a document's details."""
-    
     try:
         obj_id = ObjectId(document_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid document ID format")
-    
+
     doc = await document_collection.find_one({"_id": obj_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
     user_id = str(current_user["_id"])
     role = current_user.get("role")
     is_owner = doc.get("seller_id") == user_id
     is_admin = role == "admin"
+
     if not (is_owner or is_admin):
-        # Buyers can see approved docs only
         if doc.get("status") != "approved":
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to view this document"
             )
-    
+
     return {
         "id": str(doc["_id"]),
         "status": doc.get("status")
     }
-
 
 
 @router.post("/documents/{document_id}/request")
@@ -201,33 +178,30 @@ async def request_document(
     request_data: DocumentRequestCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Buyer requests a document (adds a request entry)."""
-    
     try:
         obj_id = ObjectId(document_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid document ID format")
-    
+
     doc = await document_collection.find_one({"_id": obj_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
     user_id = str(current_user["_id"])
-    
-    # Prevent owner from requesting their own document
+
     if doc.get("seller_id") == user_id:
         raise HTTPException(
             status_code=400,
             detail="You cannot request your own document"
         )
-    
+
     now = datetime.utcnow()
     request_entry = {
         "buyer_id": user_id,
         "message": request_data.message,
         "at": now.isoformat()
     }
-    
+
     await document_collection.update_one(
         {"_id": obj_id},
         {
@@ -235,5 +209,36 @@ async def request_document(
             "$set": {"updated_at": now}
         }
     )
-    
+
     return {"message": "Document request sent"}
+
+
+@router.patch("/documents/{doc_id}")
+async def review_document(
+    doc_id: str,
+    payload: DocumentStatusUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can review documents")
+
+    try:
+        obj_id = ObjectId(doc_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid document ID format")
+
+    doc = await document_collection.find_one({"_id": obj_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    await document_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {
+            "status": payload.status,
+            "reviewer_note": payload.reason,
+            "reviewed_at": datetime.utcnow(),
+            "reviewed_by": str(current_user["_id"]),
+        }}
+    )
+
+    return {"id": doc_id, "status": payload.status}

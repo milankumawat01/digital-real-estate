@@ -43,11 +43,9 @@ async def verify_otp_code(destination: str, otp: str, purpose: str) -> bool:
         return False
 
     if record["expires_at"] < datetime.utcnow():
+        await otp_collection.delete_one({"_id": record["_id"]})
         return False
 
-    await otp_collection.update_one(
-        {"_id": record["_id"]},
-        {"$set": {"verified": True}}
-    )
+    await otp_collection.delete_one({"_id": record["_id"]})
 
     return True

@@ -25,6 +25,7 @@ from app.database import (
     audit_log_collection,
     notification_collection,
 )
+from app.schemas.property_status import PropertyStatus
 
 router = APIRouter()
 
@@ -134,10 +135,17 @@ async def approve_property(
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
+    status_map = {
+        "approved": "available",
+        "rejected": "rejected",
+        "pending": "pending"
+    }
+    new_status = status_map.get(payload.status, "pending")
+
     await property_collection.update_one(
         {"_id": obj_id},
         {"$set": {
-            "admin_status": payload.status,
+            "status": new_status,
             "admin_notes": payload.notes,
             "updated_at": datetime.utcnow(),
         }}
@@ -150,7 +158,7 @@ async def approve_property(
         details={"notes": payload.notes},
     )
 
-    return {"id": property_id, "status": payload.status}
+    return {"id": property_id, "status": new_status}
 
 
 @router.get("/documents")

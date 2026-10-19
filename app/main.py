@@ -1,46 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
-from app.routes import (
-    auth,
-    properties,
-    users,
-    saved_searches,
-    site_visits,
-    offers,
-    documents,
-    verifications,
-    bookings,
-    payments,
-    conversations,
-    notifications,
-)
-from app.routes import (
-    auth, properties, users, saved_searches, site_visits, offers,
-    documents, verifications, bookings, payments, conversations,
-    notifications, reviews
-)
-from app.routes import (
-    auth, properties, users, saved_searches, site_visits, offers,
-    documents, verifications, bookings, payments, conversations,
-    notifications, reviews, ai
-)
-from app.routes import (
-    auth, properties, users, saved_searches, site_visits, offers,
-    documents, verifications, bookings, payments, conversations,
-    notifications, reviews, ai, seller
-)
-from app.routes import (
-    auth, properties, users, saved_searches, site_visits, offers,
-    documents, verifications, bookings, payments, conversations,
-    notifications, reviews, ai, seller, projects
-)
-from app.routes import (
-    auth, properties, users, saved_searches, site_visits, offers,
-    documents, verifications, bookings, payments, conversations,
-    notifications, reviews, ai, seller, projects, agent
-)
+from app.utils.rate_limit import limiter
 from app.routes import (
     auth, properties, users, saved_searches, site_visits, offers,
     documents, verifications, bookings, payments, conversations,
@@ -52,6 +16,9 @@ app = FastAPI(
     description="Digital Real Estate Buying Platform",
     version="1.0.0",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
@@ -75,44 +42,17 @@ app.include_router(bookings.router, prefix="/api/bookings", tags=["Bookings"])
 app.include_router(payments.router, prefix="/api/payments", tags=["Payments"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
-app.include_router(
-    reviews.router,
-    prefix="/api/properties",
-    tags=["Reviews"]
-)
-app.include_router(
-    ai.router,
-    prefix="/api/ai",
-    tags=["AI"]
-)
-app.include_router(
-    seller.router,
-    prefix="/api/seller",
-    tags=["Seller"]
-)
-app.include_router(
-    projects.router,
-    prefix="/api/projects",
-    tags=["Projects (Builder)"]
-)
-app.include_router(
-    agent.router,
-    prefix="/api/agent",
-    tags=["Agent"]
-)
-app.include_router(
-    admin.router,
-    prefix="/api/admin",
-    tags=["Admin"]
-)
+app.include_router(reviews.router, prefix="/api/properties", tags=["Reviews"])
+app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
+app.include_router(seller.router, prefix="/api/seller", tags=["Seller"])
+app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
+app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
 
 @app.get("/")
 def home():
-    return {
-        "success": True,
-        "message": "Real Estate Platform API is running",
-    }
+    return {"success": True, "message": "Real Estate Platform API is running"}
 
 
 @app.get("/health")

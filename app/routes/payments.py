@@ -56,8 +56,36 @@ async def create_payment_order(
     if booking.get("buyer_id") != str(current_user["_id"]):
         raise HTTPException(status_code=403, detail="You can only pay for your own booking")
 
-    if payload.amount > booking.get("booking_amount", float("inf")):
-        raise HTTPException(status_code=400, detail="Amount exceeds booking amount")
+    if booking.get("status") != "payment_pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot pay for booking with status: {booking.get('status')}"
+        )
+
+    total_paid = 0
+    async for p in payment_collection.find({
+        "booking_id": payload.booking_id,
+        "status": "paid"
+    }):
+        total_paid += p.get("amount", 0)
+
+    total_pending_orders = 0
+    async for p in payment_collection.find({
+        "booking_id": payload.booking_id,
+        "status": "created"
+    }):
+        total_pending_orders += p.get("amount", 0)
+
+    remaining = booking["booking_amount"] - total_paid - total_pending_orders
+
+    if payload.amount > remaining:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount exceeds remaining booking amount: ₹{remaining}"
+        )
+
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
 
     gateway_order_id = f"order_{uuid.uuid4().hex[:16]}"
 
@@ -122,14 +150,19 @@ async def verify_payment(
         }}
     )
 
-    try:
-        booking_obj_id = ObjectId(payment["booking_id"])
+    total_paid = 0
+    async for p in payment_collection.find({
+        "booking_id": payment["booking_id"],
+        "status": "paid"
+    }):
+        total_paid += p.get("amount", 0)
+
+    booking = await booking_collection.find_one({"_id": ObjectId(payment["booking_id"])})
+    if booking and total_paid >= booking.get("booking_amount", 0):
         await booking_collection.update_one(
-            {"_id": booking_obj_id},
+            {"_id": ObjectId(payment["booking_id"])},
             {"$set": {"status": "confirmed", "updated_at": now}}
         )
-    except Exception:
-        pass
 
     return {
         "payment_id": payload.payment_id,

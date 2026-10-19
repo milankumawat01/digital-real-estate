@@ -5,6 +5,7 @@ from datetime import datetime
 from app.routes.auth import get_current_user, require_seller
 from app.schemas.verification import VerificationSubmit, VerificationUpdate
 from app.database import verification_collection, property_collection, document_collection
+from app.schemas.property_status import PropertyStatus
 
 router = APIRouter()
 
@@ -67,7 +68,7 @@ async def submit_verification(
 
     await property_collection.update_one(
         {"_id": obj_id},
-        {"$set": {"status": "under_verification"}}
+        {"$set": {"status": PropertyStatus.UNDER_VERIFICATION.value}}
     )
 
     return {
@@ -105,9 +106,16 @@ async def update_verification(
         }}
     )
 
+    status_map = {
+        "verified": PropertyStatus.AVAILABLE.value,
+        "rejected": PropertyStatus.REJECTED.value,
+        "under_review": PropertyStatus.UNDER_VERIFICATION.value
+    }
+
+    new_prop_status = status_map.get(payload.status, PropertyStatus.UNDER_VERIFICATION.value)
+
     try:
         prop_obj_id = ObjectId(ver["property_id"])
-        new_prop_status = "AVAILABLE" if payload.status == "verified" else "REJECTED"
         await property_collection.update_one(
             {"_id": prop_obj_id},
             {"$set": {"status": new_prop_status}}
