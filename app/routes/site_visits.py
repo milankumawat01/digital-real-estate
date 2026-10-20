@@ -5,6 +5,7 @@ from datetime import datetime
 from app.routes.auth import get_current_user
 from app.schemas.site_visit import SiteVisitCreate, SiteVisitUpdate
 from app.database import site_visit_collection, property_collection
+from app.utils.notification_helper import create_notification
 
 router = APIRouter()
 
@@ -68,6 +69,15 @@ async def request_site_visit(
     }
 
     result = await site_visit_collection.insert_one(doc)
+
+    await create_notification(
+        user_id=prop.get("seller_id"),
+        title="New site visit request",
+        body=f"{current_user.get('name', 'Buyer')} wants to visit on {visit_data.date} at {visit_data.time}",
+        notif_type="site_visit_requested",
+        reference_id=str(result.inserted_id),
+        reference_type="site_visit",
+    )
 
     return {
         "id": str(result.inserted_id),
@@ -187,6 +197,23 @@ async def update_site_visit(
     )
 
     updated = await site_visit_collection.find_one({"_id": obj_id})
+
+    notif_map = {
+        "approved": ("Site visit approved ", "site_visit_approved"),
+        "rescheduled": ("Site visit rescheduled ", "site_visit_requested"),
+        "cancelled": ("Site visit cancelled ", "site_visit_cancelled"),
+    }
+
+    if update_fields.get("status") in notif_map:
+        title, ntype = notif_map[update_fields["status"]]
+        await create_notification(
+            user_id=visit.get("buyer_id"),
+            title=title,
+            body="Updated by seller.",
+            notif_type=ntype,
+            reference_id=visit_id,
+            reference_type="site_visit",
+        )
 
     return {
         "id": str(updated["_id"]),

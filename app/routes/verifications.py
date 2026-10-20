@@ -6,6 +6,7 @@ from app.routes.auth import get_current_user, require_seller
 from app.schemas.verification import VerificationSubmit, VerificationUpdate
 from app.database import verification_collection, property_collection, document_collection
 from app.schemas.property_status import PropertyStatus
+from app.utils.notification_helper import create_notification
 
 router = APIRouter()
 
@@ -122,6 +123,18 @@ async def update_verification(
         )
     except Exception:
         pass
+
+    notif_title = "Property verified ✅" if payload.status == "verified" else "Property verification rejected ❌"
+    notif_type = "verification_approved" if payload.status == "verified" else "verification_rejected"
+
+    await create_notification(
+        user_id=ver.get("submitted_by"),
+        title=notif_title,
+        body=payload.notes or "Check your property status",
+        notif_type=notif_type,
+        reference_id=verification_id,
+        reference_type="verification",
+    )
 
     return {
         "id": verification_id,

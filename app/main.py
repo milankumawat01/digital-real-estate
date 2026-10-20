@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -11,10 +12,42 @@ from app.routes import (
     notifications, reviews, ai, seller, projects, agent, admin
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.database import (
+        property_collection,
+        user_collection,
+        offer_collection,
+        floor_collection,
+        unit_collection,
+    )
+
+    await property_collection.create_index([("location", "2dsphere")])
+    await user_collection.create_index("email", unique=True)
+    await user_collection.create_index("mobile", unique=True)
+    await offer_collection.create_index(
+        [("property_id", 1), ("buyer_id", 1)],
+        unique=True,
+        partialFilterExpression={"status": {"$in": ["pending", "countered", "accepted"]}}
+    )
+    await floor_collection.create_index(
+        [("tower_id", 1), ("floor_number", 1)],
+        unique=True
+    )
+    await unit_collection.create_index(
+        [("floor_id", 1), ("unit_number", 1)],
+        unique=True
+    )
+
+    yield
+
+
 app = FastAPI(
     title="Real Estate Platform API",
     description="Digital Real Estate Buying Platform",
     version="1.0.0",
+    lifespan=lifespan
 )
 
 app.state.limiter = limiter

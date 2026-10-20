@@ -9,6 +9,7 @@ import os
 from app.routes.auth import get_current_user
 from app.schemas.payment import PaymentOrderCreate, PaymentVerify, PaymentWebhook
 from app.database import payment_collection, booking_collection
+from app.utils.notification_helper import create_notification
 
 router = APIRouter()
 
@@ -163,6 +164,15 @@ async def verify_payment(
             {"_id": ObjectId(payment["booking_id"])},
             {"$set": {"status": "confirmed", "updated_at": now}}
         )
+
+    await create_notification(
+        user_id=payment.get("buyer_id"),
+        title="Payment successful 💰",
+        body=f"₹{payment.get('amount', 0):,} received",
+        notif_type="payment_received",
+        reference_id=payload.payment_id,
+        reference_type="payment",
+    )
 
     return {
         "payment_id": payload.payment_id,

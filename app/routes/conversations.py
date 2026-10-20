@@ -9,6 +9,7 @@ from app.schemas.conversation import ConversationCreate, MessageCreate
 from app.database import (
     conversation_collection, message_collection, user_collection
 )
+from app.utils.notification_helper import create_notification
 
 router = APIRouter()
 
@@ -40,7 +41,6 @@ def message_serializer(doc) -> dict:
         "offer_id": doc.get("offer_id"),
         "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
     }
-
 
 
 @router.post("/")
@@ -81,7 +81,6 @@ async def create_or_get_conversation(
     return {"conversation_id": str(result.inserted_id)}
 
 
-
 @router.get("/")
 async def list_conversations(
     current_user: dict = Depends(get_current_user)
@@ -95,7 +94,6 @@ async def list_conversations(
         results.append(conversation_serializer(doc))
     
     return {"count": len(results), "results": results}
-
 
 
 @router.get("/{conversation_id}/messages")
@@ -123,7 +121,6 @@ async def get_messages(
         results.append(message_serializer(msg))
     
     return {"count": len(results), "results": results}
-
 
 
 @router.post("/{conversation_id}/messages")
@@ -165,11 +162,21 @@ async def send_message(
         }}
     )
     
+    other_participants = [p for p in conv.get("participants", []) if p != user_id]
+    for pid in other_participants:
+        await create_notification(
+            user_id=pid,
+            title=f"New message from {current_user.get('name', 'User')}",
+            body=payload.message[:100],
+            notif_type="new_message",
+            reference_id=conversation_id,
+            reference_type="conversation",
+        )
+    
     return {
         "id": str(result.inserted_id),
         "message": payload.message
     }
-
 
 
 @router.post("/{conversation_id}/attachments")

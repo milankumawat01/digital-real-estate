@@ -10,6 +10,7 @@ from app.database import (
     offer_collection,
     payment_collection,
 )
+from app.utils.notification_helper import create_notification
 
 router = APIRouter()
 
@@ -98,6 +99,15 @@ async def create_booking(
     }
 
     result = await booking_collection.insert_one(doc)
+
+    await create_notification(
+        user_id=prop.get("seller_id"),
+        title="New booking created",
+        body=f"Buyer booked your property for ₹{agreed_price:,}",
+        notif_type="booking_created",
+        reference_id=str(result.inserted_id),
+        reference_type="booking",
+    )
 
     return {
         "id": str(result.inserted_id),
@@ -224,6 +234,16 @@ async def update_booking(
             )
         except Exception:
             pass
+
+    if payload.status == "confirmed":
+        await create_notification(
+            user_id=booking.get("buyer_id"),
+            title="Booking confirmed ✅",
+            body="Your booking has been confirmed by the seller.",
+            notif_type="booking_confirmed",
+            reference_id=booking_id,
+            reference_type="booking",
+        )
 
     return {
         "id": booking_id,
