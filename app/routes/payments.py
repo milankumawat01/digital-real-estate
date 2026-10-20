@@ -167,7 +167,7 @@ async def verify_payment(
 
     await create_notification(
         user_id=payment.get("buyer_id"),
-        title="Payment successful 💰",
+        title="Payment successful ",
         body=f"₹{payment.get('amount', 0):,} received",
         notif_type="payment_received",
         reference_id=payload.payment_id,

@@ -238,7 +238,7 @@ async def update_booking(
     if payload.status == "confirmed":
         await create_notification(
             user_id=booking.get("buyer_id"),
-            title="Booking confirmed ✅",
+            title="Booking confirmed ",
             body="Your booking has been confirmed by the seller.",
             notif_type="booking_confirmed",
             reference_id=booking_id,

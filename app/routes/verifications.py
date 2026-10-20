@@ -124,7 +124,7 @@ async def update_verification(
     except Exception:
         pass
 
-    notif_title = "Property verified ✅" if payload.status == "verified" else "Property verification rejected ❌"
+    notif_title = "Property verified " if payload.status == "verified" else "Property verification rejected "
     notif_type = "verification_approved" if payload.status == "verified" else "verification_rejected"
 
     await create_notification(
