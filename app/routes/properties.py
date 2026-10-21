@@ -1,318 +1,528 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from pydantic import BaseModel
+from typing import List, Optional
 from bson import ObjectId
-from datetime import datetime
+from datetime import date
 
-from app.routes.auth import get_current_user
-from app.schemas.booking import BookingCreate, BookingUpdate
-from app.database import (
-    booking_collection,
-    property_collection,
-    offer_collection,
-    payment_collection,
-    commission_collection,
-)
-from app.utils.notification_helper import create_notification
+from app.database import property_collection, user_collection, property_view_collection
+from app.routes.auth import get_current_user, require_seller
+from app.utils.storage import save_media_file, delete_media_file
+from app.schemas.property import MediaResponse, ComparePropertiesRequest
+from app.schemas.property_status import PropertyStatus
 
 router = APIRouter()
 
 
-def booking_serializer(doc) -> dict:
+class LocationModel(BaseModel):
+    type: str = "Point"
+    coordinates: List[float]
+
+
+class PropertyCreate(BaseModel):
+    title: str
+    description: str
+    property_type: str
+    city: str
+    locality: str
+    address: str
+    price: float
+    area: float
+    bedrooms: int
+    bathrooms: int
+    floor: int
+    total_floors: int
+    furnishing: str
+    parking: str
+    amenities: List[str]
+    images: List[str]
+    videos: List[str]
+    virtual_tour_url: str
+    seller_id: str
+    status: str
+    location: LocationModel = None
+
+
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    property_type: Optional[str] = None
+    city: Optional[str] = None
+    locality: Optional[str] = None
+    address: Optional[str] = None
+    price: Optional[float] = None
+    area: Optional[float] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    floor: Optional[int] = None
+    total_floors: Optional[int] = None
+    furnishing: Optional[str] = None
+    parking: Optional[str] = None
+    amenities: Optional[List[str]] = None
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
+    virtual_tour_url: Optional[str] = None
+
+
+def property_serializer(property) -> dict:
+    media_list = property.get("media", [])
     return {
-        "id": str(doc["_id"]),
-        "property_id": doc.get("property_id"),
-        "offer_id": doc.get("offer_id"),
-        "buyer_id": doc.get("buyer_id"),
-        "seller_id": doc.get("seller_id"),
-        "agreed_price": doc.get("agreed_price"),
-        "booking_amount": doc.get("booking_amount"),
-        "status": doc.get("status", "payment_pending"),
-        "notes": doc.get("notes"),
-        "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
-        "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
-    }
-
-
-@router.post("/")
-async def create_booking(
-    payload: BookingCreate,
-    current_user: dict = Depends(get_current_user)
-):
-    try:
-        prop_obj_id = ObjectId(payload.property_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid property ID format")
-
-    prop = await property_collection.find_one({"_id": prop_obj_id})
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
-
-    try:
-        offer_obj_id = ObjectId(payload.offer_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid offer ID format")
-
-    offer = await offer_collection.find_one({"_id": offer_obj_id})
-    if not offer:
-        raise HTTPException(status_code=404, detail="Offer not found")
-
-    if offer.get("status") != "accepted":
-        raise HTTPException(
-            status_code=400,
-            detail="Offer must be accepted before creating a booking"
-        )
-
-    if offer.get("buyer_id") != str(current_user["_id"]):
-        raise HTTPException(status_code=403, detail="You can only book your own offer")
-
-    if offer.get("property_id") != payload.property_id:
-        raise HTTPException(status_code=400, detail="Property mismatch with offer")
-
-    existing = await booking_collection.find_one({
-        "offer_id": payload.offer_id,
-        "status": {"$ne": "cancelled"}
-    })
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="A booking already exists for this offer"
-        )
-
-    agreed_price = offer.get("counter_amount") or offer.get("amount")
-    booking_amount = payload.booking_amount
-
-    if booking_amount > agreed_price:
-        raise HTTPException(
-            status_code=400,
-            detail="Booking amount cannot exceed agreed price"
-        )
-
-    now = datetime.utcnow()
-    doc = {
-        "property_id": payload.property_id,
-        "offer_id": payload.offer_id,
-        "buyer_id": str(current_user["_id"]),
-        "seller_id": prop.get("seller_id"),
-        "agreed_price": agreed_price,
-        "booking_amount": booking_amount,
-        "status": "payment_pending",
-        "created_at": now,
-        "updated_at": now,
-    }
-
-    result = await booking_collection.insert_one(doc)
-
-    await create_notification(
-        user_id=prop.get("seller_id"),
-        title="New booking created",
-        body=f"Buyer booked your property for ₹{agreed_price:,}",
-        notif_type="booking_created",
-        reference_id=str(result.inserted_id),
-        reference_type="booking",
-    )
-
-    return {
-        "id": str(result.inserted_id),
-        "status": "payment_pending"
+        "id": str(property["_id"]),
+        "title": property["title"],
+        "description": property["description"],
+        "property_type": property["property_type"],
+        "city": property["city"],
+        "locality": property["locality"],
+        "address": property["address"],
+        "price": property["price"],
+        "area": property["area"],
+        "bedrooms": property["bedrooms"],
+        "bathrooms": property["bathrooms"],
+        "floor": property["floor"],
+        "total_floors": property["total_floors"],
+        "furnishing": property["furnishing"],
+        "parking": property["parking"],
+        "amenities": property["amenities"],
+        "images": property["images"],
+        "videos": property["videos"],
+        "virtual_tour_url": property["virtual_tour_url"],
+        "seller_id": property["seller_id"],
+        "status": property["status"],
+        "media": media_list,
+        "media_urls": [m["url"] for m in media_list if m.get("url")],
     }
 
 
 @router.get("/")
-async def list_bookings(
-    current_user: dict = Depends(get_current_user)
+async def get_properties(
+    city: str = None,
+    locality: str = None,
+    property_type: str = None,
+    status: str = None,
+    min_price: float = None,
+    max_price: float = None,
+    min_area: float = None,
+    max_area: float = None,
+    bedrooms: int = None,
+    bathrooms: int = None,
+    furnishing: str = None,
+    min_floor: int = None,
+    max_floor: int = None,
+    search: str = None,
+    amenities: str = None,
+    seller_id: str = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    limit: int = 10,
 ):
-    user_id = str(current_user["_id"])
-    role = current_user.get("role", "buyer")
+    query = {}
 
-    if role == "admin":
-        query = {}
-    elif role in ["seller", "builder", "agent"]:
-        query = {"seller_id": user_id}
-    else:
-        query = {"buyer_id": user_id}
+    if city:
+        query["city"] = {"$regex": city, "$options": "i"}
+
+    if locality:
+        query["locality"] = {"$regex": locality, "$options": "i"}
+
+    if property_type:
+        query["property_type"] = {"$regex": property_type, "$options": "i"}
+
+    if status:
+        query["status"] = status.lower()
+
+    if furnishing:
+        query["furnishing"] = {"$regex": furnishing, "$options": "i"}
+
+    if seller_id:
+        query["seller_id"] = seller_id
+
+    if min_price is not None or max_price is not None:
+        query["price"] = {}
+        if min_price is not None:
+            query["price"]["$gte"] = min_price
+        if max_price is not None:
+            query["price"]["$lte"] = max_price
+
+    if min_area is not None or max_area is not None:
+        query["area"] = {}
+        if min_area is not None:
+            query["area"]["$gte"] = min_area
+        if max_area is not None:
+            query["area"]["$lte"] = max_area
+
+    if bedrooms is not None:
+        query["bedrooms"] = bedrooms
+
+    if bathrooms is not None:
+        query["bathrooms"] = bathrooms
+
+    if min_floor is not None or max_floor is not None:
+        query["floor"] = {}
+        if min_floor is not None:
+            query["floor"]["$gte"] = min_floor
+        if max_floor is not None:
+            query["floor"]["$lte"] = max_floor
+
+    if amenities:
+        amenity_list = [a.strip() for a in amenities.split(",")]
+        query["amenities"] = {"$all": amenity_list}
+
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
+            {"locality": {"$regex": search, "$options": "i"}},
+            {"address": {"$regex": search, "$options": "i"}},
+        ]
+
+    valid_sort_fields = ["price", "area", "created_at", "bedrooms", "bathrooms"]
+    if sort_by not in valid_sort_fields:
+        sort_by = "created_at"
+
+    sort_direction = -1 if sort_order.lower() == "desc" else 1
+
+    skip = (page - 1) * limit
+
+    total = await property_collection.count_documents(query)
+
+    cursor = property_collection.find(query).sort(sort_by, sort_direction).skip(skip).limit(limit)
 
     results = []
-    async for doc in booking_collection.find(query).sort("created_at", -1):
-        results.append(booking_serializer(doc))
+    async for prop in cursor:
+        results.append(property_serializer(prop))
+
+    return {
+        "count": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "results": results,
+    }
+
+
+@router.get("/search")
+async def search_properties(
+    city: str = None,
+    locality: str = None,
+    property_type: str = None,
+    status: str = None,
+    min_price: float = None,
+    max_price: float = None,
+    min_area: float = None,
+    max_area: float = None,
+    bedrooms: int = None,
+    bathrooms: int = None,
+    furnishing: str = None,
+    min_floor: int = None,
+    max_floor: int = None,
+    search: str = None,
+    amenities: str = None,
+    seller_id: str = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    limit: int = 10,
+):
+    return await get_properties(
+        city=city,
+        locality=locality,
+        property_type=property_type,
+        status=status,
+        min_price=min_price,
+        max_price=max_price,
+        min_area=min_area,
+        max_area=max_area,
+        bedrooms=bedrooms,
+        bathrooms=bathrooms,
+        furnishing=furnishing,
+        min_floor=min_floor,
+        max_floor=max_floor,
+        search=search,
+        amenities=amenities,
+        seller_id=seller_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/nearby")
+async def get_nearby_properties(
+    latitude: float,
+    longitude: float,
+    radius_km: float = 5.0,
+    limit: int = 20,
+):
+    radius_meters = radius_km * 1000
+
+    query = {
+        "location": {
+            "$near": {
+                "$geometry": {
+                    "type": "Point",
+                    "coordinates": [longitude, latitude],
+                },
+                "$maxDistance": radius_meters,
+            }
+        }
+    }
+
+    results = []
+    cursor = property_collection.find(query).limit(limit)
+
+    async for prop in cursor:
+        item = property_serializer(prop)
+        if "location" in prop:
+            item["location"] = prop["location"]
+        results.append(item)
 
     return {
         "count": len(results),
-        "results": results
+        "center": {"latitude": latitude, "longitude": longitude},
+        "radius_km": radius_km,
+        "results": results,
     }
 
 
-@router.get("/{booking_id}")
-async def get_booking(
-    booking_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    try:
-        obj_id = ObjectId(booking_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid booking ID format")
-
-    booking = await booking_collection.find_one({"_id": obj_id})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-
-    user_id = str(current_user["_id"])
-    role = current_user.get("role")
-    is_participant = (
-        booking.get("buyer_id") == user_id or
-        booking.get("seller_id") == user_id or
-        role == "admin"
-    )
-    if not is_participant:
-        raise HTTPException(status_code=403, detail="Not authorized to view this booking")
-
-    return booking_serializer(booking)
-
-
-@router.patch("/{booking_id}")
-async def update_booking(
-    booking_id: str,
-    payload: BookingUpdate,
-    current_user: dict = Depends(get_current_user)
-):
-    try:
-        obj_id = ObjectId(booking_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid booking ID format")
-
-    booking = await booking_collection.find_one({"_id": obj_id})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-
-    user_id = str(current_user["_id"])
-    role = current_user.get("role")
-    is_seller = booking.get("seller_id") == user_id
-    is_admin = role == "admin"
-    if not (is_seller or is_admin):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the seller or admin can update this booking"
-        )
-
-    VALID_TRANSITIONS = {
-        "payment_pending": ["confirmed", "cancelled"],
-        "confirmed": ["completed", "cancelled"],
-        "cancelled": [],
-        "completed": []
-    }
-
-    current_status = booking.get("status")
-    if payload.status not in VALID_TRANSITIONS.get(current_status, []):
+@router.post("/compare")
+async def compare_properties(request: ComparePropertiesRequest):
+    if len(request.property_ids) < 2 or len(request.property_ids) > 3:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot transition from {current_status} to {payload.status}"
+            detail="You can compare between 2 and 3 properties only",
         )
 
-    now = datetime.utcnow()
-    await booking_collection.update_one(
-        {"_id": obj_id},
-        {"$set": {
-            "status": payload.status,
-            "notes": payload.notes,
-            "updated_at": now
-        }}
+    unique_ids = list(set(request.property_ids))
+    if len(unique_ids) != len(request.property_ids):
+        raise HTTPException(status_code=400, detail="Duplicate property IDs found")
+
+    object_ids = []
+    for pid in request.property_ids:
+        try:
+            object_ids.append(ObjectId(pid))
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid property ID format: {pid}"
+            )
+
+    properties = []
+    async for prop in property_collection.find({"_id": {"$in": object_ids}}):
+        properties.append(property_serializer(prop))
+
+    if len(properties) != len(request.property_ids):
+        raise HTTPException(status_code=404, detail="One or more properties not found")
+
+    id_to_prop = {prop["id"]: prop for prop in properties}
+    ordered_properties = [
+        id_to_prop[pid] for pid in request.property_ids if pid in id_to_prop
+    ]
+
+    return {"count": len(ordered_properties), "properties": ordered_properties}
+
+
+@router.get("/{property_id}")
+async def get_property(property_id: str):
+    try:
+        obj_id = ObjectId(property_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
+
+    prop = await property_collection.find_one({"_id": obj_id})
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    today = date.today().isoformat()
+    await property_view_collection.update_one(
+        {"property_id": property_id, "date": today},
+        {"$inc": {"views": 1}},
+        upsert=True,
     )
 
-    if payload.status == "cancelled":
-        try:
-            prop_obj_id = ObjectId(booking["property_id"])
-            await property_collection.update_one(
-                {"_id": prop_obj_id},
-                {"$set": {"status": "available"}}
-            )
-        except Exception:
-            pass
+    return {"success": True, "property": property_serializer(prop)}
 
-    if payload.status in ["confirmed", "completed"]:
-        try:
-            prop_obj_id = ObjectId(booking["property_id"])
-            await property_collection.update_one(
-                {"_id": prop_obj_id},
-                {"$set": {"status": "sold"}}
-            )
-        except Exception:
-            pass
 
-    if payload.status == "confirmed":
-        await create_notification(
-            user_id=booking.get("buyer_id"),
-            title="Booking confirmed ",
-            body="Your booking has been confirmed by the seller.",
-            notif_type="booking_confirmed",
-            reference_id=booking_id,
-            reference_type="booking",
-        )
+@router.post("/")
+async def create_property(
+    property_data: PropertyCreate,
+    current_user: dict = Depends(require_seller),
+):
+    data = property_data.dict()
+    data["seller_id"] = str(current_user["_id"])
+    data["status"] = PropertyStatus.PENDING.value
 
-        prop = await property_collection.find_one(
-            {"_id": ObjectId(booking["property_id"])}
-        )
-        agent_id = prop.get("assigned_agent_id") if prop else None
-
-        if agent_id:
-            commission_doc = {
-                "agent_id": agent_id,
-                "booking_id": booking_id,
-                "property_id": booking["property_id"],
-                "deal_amount": booking["agreed_price"],
-                "commission_percent": 1.0,
-                "commission_amount": booking["agreed_price"] * 0.01,
-                "status": "pending",
-                "created_at": now,
-            }
-            await commission_collection.insert_one(commission_doc)
+    result = await property_collection.insert_one(data)
 
     return {
-        "id": booking_id,
-        "status": payload.status
+        "success": True,
+        "message": "Property created successfully",
+        "property_id": str(result.inserted_id),
     }
 
 
-@router.get("/{booking_id}/payments")
-async def get_booking_payments(
-    booking_id: str,
-    current_user: dict = Depends(get_current_user)
+@router.patch("/{property_id}")
+async def update_property(
+    property_id: str,
+    property_data: PropertyUpdate,
+    current_user: dict = Depends(require_seller),
 ):
     try:
-        obj_id = ObjectId(booking_id)
+        obj_id = ObjectId(property_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid booking ID format")
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
 
-    booking = await booking_collection.find_one({"_id": obj_id})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+    existing = await property_collection.find_one({"_id": obj_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Property not found")
 
-    user_id = str(current_user["_id"])
-    role = current_user.get("role")
-    is_participant = (
-        booking.get("buyer_id") == user_id or
-        booking.get("seller_id") == user_id or
-        role == "admin"
-    )
-    if not is_participant:
+    if existing["seller_id"] != str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(
             status_code=403,
-            detail="You are not authorized to view payments for this booking"
+            detail="You can only edit your own properties"
         )
 
-    results = []
-    total_paid = 0
-    async for doc in payment_collection.find({"booking_id": booking_id}).sort("created_at", -1):
-        results.append({
-            "id": str(doc["_id"]),
-            "amount": doc.get("amount"),
-            "currency": doc.get("currency", "INR"),
-            "status": doc.get("status"),
-            "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
-        })
-        if doc.get("status") == "paid":
-            total_paid += doc.get("amount", 0)
+    update_fields = property_data.dict(exclude_unset=True)
+
+    await property_collection.update_one(
+        {"_id": obj_id},
+        {"$set": update_fields}
+    )
+
+    return {"success": True, "message": "Property updated successfully"}
+
+
+@router.delete("/{property_id}")
+async def delete_property(
+    property_id: str,
+    current_user: dict = Depends(require_seller),
+):
+    try:
+        obj_id = ObjectId(property_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
+
+    existing = await property_collection.find_one({"_id": obj_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    if existing["seller_id"] != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own properties"
+        )
+
+    await property_collection.delete_one({"_id": obj_id})
+
+    return {"success": True, "message": "Property deleted successfully"}
+
+
+@router.post("/{property_id}/assign-agent")
+async def assign_agent(
+    property_id: str,
+    payload: dict,
+    current_user: dict = Depends(require_seller),
+):
+    try:
+        obj_id = ObjectId(property_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
+
+    prop = await property_collection.find_one({"_id": obj_id})
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    if prop.get("seller_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not your property")
+
+    agent_id = payload.get("agent_id")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+
+    try:
+        agent = await user_collection.find_one({"_id": ObjectId(agent_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid agent ID")
+
+    if not agent or agent.get("role") != "agent":
+        raise HTTPException(status_code=400, detail="User is not an agent")
+
+    await property_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"assigned_agent_id": agent_id}}
+    )
+
+    return {"id": property_id, "assigned_agent_id": agent_id}
+
+
+@router.post("/{property_id}/media", response_model=MediaResponse)
+async def upload_property_media(
+    property_id: str,
+    file: UploadFile = File(...),
+    media_type: str = Form("image"),
+    current_user: dict = Depends(require_seller),
+):
+    try:
+        obj_id = ObjectId(property_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
+
+    prop = await property_collection.find_one({"_id": obj_id})
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    if prop.get("seller_id") != str(current_user["_id"]):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only upload media for your own properties",
+        )
+
+    try:
+        result = await save_media_file(file, property_id, media_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await property_collection.update_one(
+        {"_id": obj_id}, {"$push": {"media": result}}
+    )
 
     return {
-        "booking_id": booking_id,
-        "booking_amount": booking.get("booking_amount"),
-        "total_paid": total_paid,
-        "payments": results
+        "media_id": result["media_id"],
+        "url": result["url"],
+        "media_type": result["media_type"],
+        "filename": result["filename"],
     }
+
+
+@router.delete("/{property_id}/media/{media_id}")
+async def delete_property_media(
+    property_id: str,
+    media_id: str,
+    current_user: dict = Depends(require_seller),
+):
+    try:
+        obj_id = ObjectId(property_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid property ID format")
+
+    prop = await property_collection.find_one({"_id": obj_id})
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    if prop.get("seller_id") != str(current_user["_id"]):
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete media from your own properties",
+        )
+
+    media_list = prop.get("media", [])
+    media_item = next((m for m in media_list if m["media_id"] == media_id), None)
+
+    if not media_item:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    delete_media_file(property_id, media_item["url"])
+
+    await property_collection.update_one(
+        {"_id": obj_id}, {"$pull": {"media": {"media_id": media_id}}}
+    )
+
+    return {"message": "Media deleted"}
