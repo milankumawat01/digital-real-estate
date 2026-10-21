@@ -9,6 +9,7 @@ from app.database import (
     property_collection,
     offer_collection,
     payment_collection,
+    commission_collection,
 )
 from app.utils.notification_helper import create_notification
 
@@ -244,6 +245,24 @@ async def update_booking(
             reference_id=booking_id,
             reference_type="booking",
         )
+
+        prop = await property_collection.find_one(
+            {"_id": ObjectId(booking["property_id"])}
+        )
+        agent_id = prop.get("assigned_agent_id") if prop else None
+
+        if agent_id:
+            commission_doc = {
+                "agent_id": agent_id,
+                "booking_id": booking_id,
+                "property_id": booking["property_id"],
+                "deal_amount": booking["agreed_price"],
+                "commission_percent": 1.0,
+                "commission_amount": booking["agreed_price"] * 0.01,
+                "status": "pending",
+                "created_at": now,
+            }
+            await commission_collection.insert_one(commission_doc)
 
     return {
         "id": booking_id,
