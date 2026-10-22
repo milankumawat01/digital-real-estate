@@ -216,4 +216,4 @@ async def reset_password(payload: ResetPasswordRequest):
     return {
         "success": True,
         "message": "Password reset successfully. You can now log in."
-    }
+}
