@@ -1,3 +1,5 @@
+from bson import ObjectId
+
 from app.database import (
     property_collection,
     offer_collection,
@@ -5,6 +7,7 @@ from app.database import (
     booking_collection,
     conversation_collection,
     message_collection,
+    property_view_collection,
 )
 
 
@@ -15,12 +18,12 @@ async def get_seller_analytics(seller_id: str) -> dict:
 
     available_properties = await property_collection.count_documents({
         "seller_id": seller_id,
-        "status": "AVAILABLE"
+        "status": "available"
     })
 
     sold_properties = await property_collection.count_documents({
         "seller_id": seller_id,
-        "status": "SOLD"
+        "status": "sold"
     })
 
     total_offers = await offer_collection.count_documents({
@@ -68,7 +71,16 @@ async def get_seller_analytics(seller_id: str) -> dict:
             "sender_id": {"$ne": seller_id}
         })
 
-    views_estimate = total_properties * 50 + total_site_visits * 10 + total_offers * 5
+    property_ids = []
+    async for p in property_collection.find({"seller_id": seller_id}):
+        property_ids.append(str(p["_id"]))
+
+    total_views = 0
+    if property_ids:
+        async for view in property_view_collection.find({
+            "property_id": {"$in": property_ids}
+        }):
+            total_views += view.get("views", 0)
 
     return {
         "properties": {
@@ -88,7 +100,7 @@ async def get_seller_analytics(seller_id: str) -> dict:
             "total": total_bookings,
             "confirmed": confirmed_bookings,
         },
-        "views": views_estimate,
+        "views": total_views,
         "inquiries_count": total_offers + total_site_visits + total_messages_received,
         "site_visits_count": total_site_visits,
         "offers_count": total_offers,
