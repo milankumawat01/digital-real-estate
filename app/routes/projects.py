@@ -87,6 +87,9 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if project.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not your project")
+
     return project_serializer(project)
 
 
@@ -146,7 +149,7 @@ async def create_tower(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if project.get("builder_id") != str(current_user["_id"]):
+    if project.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not your project")
 
     now = datetime.utcnow()
@@ -178,8 +181,24 @@ async def create_floor(
     if not tower:
         raise HTTPException(status_code=404, detail="Tower not found")
 
-    if tower.get("builder_id") != str(current_user["_id"]):
+    if tower.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not your tower")
+
+    if payload.floor_number > tower["total_floors"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Floor {payload.floor_number} exceeds tower height {tower['total_floors']}"
+        )
+
+    existing = await floor_collection.find_one({
+        "tower_id": tower_id,
+        "floor_number": payload.floor_number
+    })
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Floor {payload.floor_number} already exists in this tower"
+        )
 
     now = datetime.utcnow()
     doc = {
@@ -210,8 +229,18 @@ async def create_unit(
     if not floor:
         raise HTTPException(status_code=404, detail="Floor not found")
 
-    if floor.get("builder_id") != str(current_user["_id"]):
+    if floor.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not your floor")
+
+    existing = await unit_collection.find_one({
+        "floor_id": floor_id,
+        "unit_number": payload.unit_number
+    })
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unit {payload.unit_number} already exists on this floor"
+        )
 
     now = datetime.utcnow()
     doc = {
@@ -252,7 +281,7 @@ async def update_unit(
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
 
-    if unit.get("builder_id") != str(current_user["_id"]):
+    if unit.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not your unit")
 
     update_fields = {k: v for k, v in payload.dict().items() if v is not None}
@@ -284,6 +313,13 @@ async def project_analytics(
         ObjectId(project_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid project ID format")
+
+    project = await project_collection.find_one({"_id": ObjectId(project_id)})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.get("builder_id") != str(current_user["_id"]) and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not your project")
 
     analytics = await get_project_analytics(project_id)
 
