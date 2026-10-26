@@ -20,11 +20,16 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserRegister):
-    existing = await user_collection.find_one({"email": user.email})
+    existing = await user_collection.find_one({"email": user.email.lower()})
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    existing_mobile = await user_collection.find_one({"mobile": user.mobile})
+    if existing_mobile:
+        raise HTTPException(status_code=409, detail="Mobile already registered")
 
     user_dict = user.dict()
+    user_dict["email"] = user.email.lower()
     user_dict["password"] = hash_password(user.password)
     user_dict["status"] = "active"
     user_dict["is_verified"] = False
@@ -46,11 +51,49 @@ async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
-    user = await user_collection.find_one({"email": form_data.username})
+    user = await user_collection.find_one({"email": form_data.username.lower()})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not verify_password(form_data.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if user.get("status") in ["suspended", "banned"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been suspended. Contact support."
+        )
+
+    token = create_access_token({
+        "sub": str(user["_id"]),
+        "email": user["email"],
+        "role": user["role"]
+    })
+
+    return {
+        "success": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"]
+        }
+    }
+
+
+@router.post("/login-json")
+@limiter.limit("5/minute")
+async def login_json(
+    request: Request,
+    payload: UserLogin
+):
+    user = await user_collection.find_one({"email": payload.email.lower()})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not verify_password(payload.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.get("status") in ["suspended", "banned"]:
@@ -109,6 +152,15 @@ def require_seller(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
+def require_buyer(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "buyer":
+        raise HTTPException(
+            status_code=403,
+            detail="Only buyers can perform this action"
+        )
+    return current_user
+
+
 @router.post("/send-otp")
 @limiter.limit("5/hour")
 async def send_otp(request: Request, payload: SendOTPRequest):
@@ -153,7 +205,7 @@ async def verify_otp(payload: VerifyOTPRequest):
 @router.post("/forgot-password")
 @limiter.limit("3/hour")
 async def forgot_password(request: Request, payload: ForgotPasswordRequest):
-    user = await user_collection.find_one({"email": payload.email})
+    user = await user_collection.find_one({"email": payload.email.lower()})
 
     if not user:
         return {
@@ -216,4 +268,4 @@ async def reset_password(payload: ResetPasswordRequest):
     return {
         "success": True,
         "message": "Password reset successfully. You can now log in."
-}
+        }
