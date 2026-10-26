@@ -285,7 +285,10 @@ async def get_nearby_properties(
 
 
 @router.post("/compare")
-async def compare_properties(request: ComparePropertiesRequest):
+async def compare_properties(
+    request: ComparePropertiesRequest,
+    current_user: dict = Depends(get_current_user)
+):
     if len(request.property_ids) < 2 or len(request.property_ids) > 3:
         raise HTTPException(
             status_code=400,
