@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
 from datetime import datetime
 
-from app.routes.auth import get_current_user
+from app.routes.auth import get_current_user, require_buyer
 from app.schemas.offer import OfferCreate, CounterOfferRequest, RejectOfferRequest
 from app.database import offer_collection, property_collection
 from app.utils.notification_helper import create_notification
@@ -32,7 +32,7 @@ def offer_serializer(doc) -> dict:
 @router.post("/")
 async def submit_offer(
     offer_data: OfferCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_buyer)
 ):
     try:
         obj_id = ObjectId(offer_data.property_id)
@@ -183,7 +183,6 @@ async def counter_offer(
             detail=f"Cannot counter an offer with status: {offer.get('status')}"
         )
 
-    # Prevent same party from countering twice in a row
     if offer.get("last_counter_by") == user_id:
         raise HTTPException(
             status_code=403,
