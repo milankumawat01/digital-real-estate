@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
 from datetime import datetime
 
-from app.routes.auth import get_current_user
+from app.routes.auth import get_current_user, require_buyer
 from app.schemas.site_visit import SiteVisitCreate, SiteVisitUpdate
 from app.database import site_visit_collection, property_collection
 from app.utils.notification_helper import create_notification
@@ -28,7 +28,7 @@ def site_visit_serializer(doc) -> dict:
 @router.post("/")
 async def request_site_visit(
     visit_data: SiteVisitCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_buyer)
 ):
     try:
         obj_id = ObjectId(visit_data.property_id)
