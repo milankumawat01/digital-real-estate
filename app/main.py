@@ -79,6 +79,7 @@ app.include_router(reviews.router, prefix="/api/properties", tags=["Reviews"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(seller.router, prefix="/api/seller", tags=["Seller"])
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
+app.include_router(projects.router, prefix="/api", tags=["Builder Hierarchy"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
@@ -91,3 +92,4 @@ def home():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
