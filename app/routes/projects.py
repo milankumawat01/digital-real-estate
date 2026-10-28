@@ -330,3 +330,29 @@ async def project_analytics(
         "available_units": analytics["available_units"],
         "detailed": analytics
     }
+
+@router.post("/towers/{tower_id}/floors")
+async def create_floor_blueprint(
+    tower_id: str,
+    payload: FloorCreate,
+    current_user: dict = Depends(require_builder)
+):
+    return await create_floor(tower_id, payload, current_user)
+
+
+@router.post("/floors/{floor_id}/units")
+async def create_unit_blueprint(
+    floor_id: str,
+    payload: UnitCreate,
+    current_user: dict = Depends(require_builder)
+):
+    return await create_unit(floor_id, payload, current_user)
+
+
+@router.patch("/units/{unit_id}")
+async def update_unit_blueprint(
+    unit_id: str,
+    payload: UnitUpdate,
+    current_user: dict = Depends(require_builder)
+):
+    return await update_unit(unit_id, payload, current_user)
