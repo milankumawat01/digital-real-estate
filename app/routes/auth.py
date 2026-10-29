@@ -1,3 +1,6 @@
+import hashlib
+import re
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from bson import ObjectId
@@ -17,10 +20,20 @@ from app.database import user_collection
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
+MOBILE_REGEX = re.compile(r"^\+?[1-9]\d{9,14}$")
+
 
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserRegister):
-    existing = await user_collection.find_one({"email": user.email.lower()})
+    if not MOBILE_REGEX.match(user.mobile):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mobile number format"
+        )
+
+    email_lower = user.email.lower()
+
+    existing = await user_collection.find_one({"email": email_lower})
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
@@ -29,7 +42,7 @@ async def register(user: UserRegister):
         raise HTTPException(status_code=409, detail="Mobile already registered")
 
     user_dict = user.dict()
-    user_dict["email"] = user.email.lower()
+    user_dict["email"] = email_lower
     user_dict["password"] = hash_password(user.password)
     user_dict["status"] = "active"
     user_dict["is_verified"] = False
@@ -127,9 +140,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     try:
-        user = await user_collection.find_one({"_id": ObjectId(payload["sub"])})
+        user_id = ObjectId(payload["sub"])
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token subject")
+
+    user = await user_collection.find_one({"_id": user_id})
 
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -214,12 +229,13 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
         }
 
     token = generate_reset_token()
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     expires_at = datetime.utcnow() + timedelta(minutes=15)
 
     await user_collection.update_one(
         {"_id": user["_id"]},
         {"$set": {
-            "reset_token": token,
+            "reset_token_hash": token_hash,
             "reset_token_expires": expires_at
         }}
     )
@@ -232,7 +248,8 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
 
 @router.post("/verify-reset-token")
 async def verify_reset_token(payload: VerifyResetTokenRequest):
-    user = await user_collection.find_one({"reset_token": payload.token})
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    user = await user_collection.find_one({"reset_token_hash": token_hash})
 
     if not user:
         raise HTTPException(status_code=400, detail="Invalid token")
@@ -249,7 +266,8 @@ async def verify_reset_token(payload: VerifyResetTokenRequest):
 
 @router.post("/reset-password")
 async def reset_password(payload: ResetPasswordRequest):
-    user = await user_collection.find_one({"reset_token": payload.token})
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    user = await user_collection.find_one({"reset_token_hash": token_hash})
 
     if not user:
         raise HTTPException(status_code=400, detail="Invalid token")
@@ -261,11 +279,11 @@ async def reset_password(payload: ResetPasswordRequest):
         {"_id": user["_id"]},
         {
             "$set": {"password": hash_password(payload.new_password)},
-            "$unset": {"reset_token": "", "reset_token_expires": ""}
+            "$unset": {"reset_token_hash": "", "reset_token_expires": ""}
         }
     )
 
     return {
         "success": True,
         "message": "Password reset successfully. You can now log in."
-        }
+}
