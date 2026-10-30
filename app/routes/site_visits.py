@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, date
 
 from app.routes.auth import get_current_user, require_buyer
 from app.schemas.site_visit import SiteVisitCreate, SiteVisitUpdate
@@ -25,6 +25,30 @@ def site_visit_serializer(doc) -> dict:
     }
 
 
+def validate_visit_date_time(date_str: str, time_str: str):
+    try:
+        visit_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use YYYY-MM-DD"
+        )
+
+    if visit_date < date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="Visit date cannot be in the past"
+        )
+
+    try:
+        datetime.strptime(time_str, "%H:%M")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid time format. Use HH:MM (24-hour)"
+        )
+
+
 @router.post("/")
 async def request_site_visit(
     visit_data: SiteVisitCreate,
@@ -44,6 +68,8 @@ async def request_site_visit(
             status_code=400,
             detail="You cannot request a visit for your own property"
         )
+
+    validate_visit_date_time(visit_data.date, visit_data.time)
 
     existing = await site_visit_collection.find_one({
         "property_id": visit_data.property_id,
@@ -188,6 +214,7 @@ async def update_site_visit(
                 status_code=400,
                 detail="New date and time are required when rescheduling"
             )
+        validate_visit_date_time(update_fields["date"], update_fields["time"])
 
     update_fields["updated_at"] = datetime.utcnow()
 

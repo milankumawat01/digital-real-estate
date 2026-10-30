@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional
@@ -118,19 +120,19 @@ async def get_properties(
     query = {}
 
     if city:
-        query["city"] = {"$regex": city, "$options": "i"}
+        query["city"] = {"$regex": re.escape(city), "$options": "i"}
 
     if locality:
-        query["locality"] = {"$regex": locality, "$options": "i"}
+        query["locality"] = {"$regex": re.escape(locality), "$options": "i"}
 
     if property_type:
-        query["property_type"] = {"$regex": property_type, "$options": "i"}
+        query["property_type"] = {"$regex": re.escape(property_type), "$options": "i"}
 
     if status:
         query["status"] = status.lower()
 
     if furnishing:
-        query["furnishing"] = {"$regex": furnishing, "$options": "i"}
+        query["furnishing"] = {"$regex": re.escape(furnishing), "$options": "i"}
 
     if seller_id:
         query["seller_id"] = seller_id
@@ -167,11 +169,12 @@ async def get_properties(
         query["amenities"] = {"$all": amenity_list}
 
     if search:
+        escaped = re.escape(search)
         query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"description": {"$regex": search, "$options": "i"}},
-            {"locality": {"$regex": search, "$options": "i"}},
-            {"address": {"$regex": search, "$options": "i"}},
+            {"title": {"$regex": escaped, "$options": "i"}},
+            {"description": {"$regex": escaped, "$options": "i"}},
+            {"locality": {"$regex": escaped, "$options": "i"}},
+            {"address": {"$regex": escaped, "$options": "i"}},
         ]
 
     valid_sort_fields = ["price", "area", "created_at", "bedrooms", "bathrooms"]
