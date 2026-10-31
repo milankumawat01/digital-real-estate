@@ -332,6 +332,40 @@ async def create_complaint(
     return {"id": str(result.inserted_id), "status": "open"}
 
 
+@router.patch("/complaints/{complaint_id}")
+async def resolve_complaint(
+    complaint_id: str,
+    admin: dict = Depends(require_admin),
+):
+    try:
+        obj_id = ObjectId(complaint_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid complaint ID format")
+
+    complaint = await complaint_collection.find_one({"_id": obj_id})
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    await complaint_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {
+            "status": "resolved",
+            "resolved_by": str(admin["_id"]),
+            "resolved_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }}
+    )
+
+    await log_admin_action(
+        admin_id=str(admin["_id"]),
+        action="complaint_resolved",
+        target=complaint_id,
+        details={},
+    )
+
+    return {"id": complaint_id, "status": "resolved"}
+
+
 @router.get("/reviews")
 async def moderate_reviews_list(
     status: str = None,
@@ -400,8 +434,19 @@ async def send_admin_notification(
 ):
     now = datetime.utcnow()
     count = 0
+    invalid_ids = []
 
     for recipient_id in payload.recipient_ids:
+        try:
+            user = await user_collection.find_one({"_id": ObjectId(recipient_id)})
+        except Exception:
+            invalid_ids.append(recipient_id)
+            continue
+
+        if not user:
+            invalid_ids.append(recipient_id)
+            continue
+
         doc = {
             "user_id": recipient_id,
             "title": payload.title,
@@ -415,6 +460,12 @@ async def send_admin_notification(
         await notification_collection.insert_one(doc)
         count += 1
 
+    if count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No valid recipients found. Invalid: {invalid_ids}"
+        )
+
     await log_admin_action(
         admin_id=str(admin["_id"]),
         action="send_notification",
@@ -422,7 +473,11 @@ async def send_admin_notification(
         details={"title": payload.title, "type": payload.type},
     )
 
-    return {"message": "Notification queued", "count": count}
+    return {
+        "message": "Notification queued",
+        "count": count,
+        "invalid_recipients": invalid_ids
+    }
 
 
 @router.get("/reports")
