@@ -29,3 +29,10 @@ uploads/
 
 *.db
 *.sqlite3
+.env
+.venv/
+venv/
+reports/
+__pycache__/
+*.pyc
+uploads/

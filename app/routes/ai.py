@@ -52,7 +52,7 @@ async def search_properties_by_filters(filters: dict, limit: int = 10) -> list:
     if filters.get("parking"):
         query["parking"] = {"$regex": "car", "$options": "i"}
 
-    # ✅ Hamesha available properties hi dikhao
+   
     query["status"] = "available"
 
     results = []
