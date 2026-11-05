@@ -1,5 +1,4 @@
 import re
-
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional
@@ -131,8 +130,7 @@ async def get_properties(
         if max_floor is not None: query["floor"]["$lte"] = max_floor
 
     if amenities:
-        amenity_list = [a.strip() for a in amenities.split(",")]
-        query["amenities"] = {"$all": amenity_list}
+        query["amenities"] = {"$all": [a.strip() for a in amenities.split(",")]}
 
     if search:
         escaped = re.escape(search)
@@ -162,20 +160,12 @@ async def search_properties(**kwargs):
 
 @router.get("/nearby")
 async def get_nearby_properties(latitude: float, longitude: float, radius_km: float = 5.0, limit: int = 20):
-    query = {
-        "location": {
-            "$near": {
-                "$geometry": {"type": "Point", "coordinates": [longitude, latitude]},
-                "$maxDistance": radius_km * 1000
-            }
-        }
-    }
+    query = {"location": {"$near": {"$geometry": {"type": "Point", "coordinates": [longitude, latitude]}, "$maxDistance": radius_km * 1000}}}
     results = []
     async for prop in property_collection.find(query).limit(limit):
         item = property_serializer(prop)
         if "location" in prop: item["location"] = prop["location"]
         results.append(item)
-
     return {"count": len(results), "center": {"latitude": latitude, "longitude": longitude}, "radius_km": radius_km, "results": results}
 
 
@@ -183,7 +173,6 @@ async def get_nearby_properties(latitude: float, longitude: float, radius_km: fl
 async def compare_properties(request: ComparePropertiesRequest, current_user: dict = Depends(get_current_user)):
     if len(request.property_ids) < 2 or len(request.property_ids) > 3:
         raise HTTPException(status_code=400, detail="You can compare between 2 and 3 properties only")
-
     unique_ids = list(set(request.property_ids))
     if len(unique_ids) != len(request.property_ids):
         raise HTTPException(status_code=400, detail="Duplicate property IDs found")
@@ -212,7 +201,6 @@ async def get_property(property_id: str):
 
     today = date.today().isoformat()
     await property_view_collection.update_one({"property_id": property_id, "date": today}, {"$inc": {"views": 1}}, upsert=True)
-
     return {"success": True, "property": property_serializer(prop)}
 
 
@@ -283,8 +271,7 @@ async def upload_property_media(property_id: str, file: UploadFile = File(...), 
 
     prop = await property_collection.find_one({"_id": obj_id})
     if not prop: raise HTTPException(status_code=404, detail="Property not found")
-    if prop.get("seller_id") != str(current_user["_id"]):
-        raise HTTPException(status_code=403, detail="You can only upload media for your own properties")
+    if prop.get("seller_id") != str(current_user["_id"]): raise HTTPException(status_code=403, detail="You can only upload media for your own properties")
 
     try: result = await save_media_file(file, property_id, media_type)
     except ValueError as e: raise HTTPException(status_code=400, detail=str(e))
@@ -300,8 +287,7 @@ async def delete_property_media(property_id: str, media_id: str, current_user: d
 
     prop = await property_collection.find_one({"_id": obj_id})
     if not prop: raise HTTPException(status_code=404, detail="Property not found")
-    if prop.get("seller_id") != str(current_user["_id"]):
-        raise HTTPException(status_code=403, detail="You can only delete media from your own properties")
+    if prop.get("seller_id") != str(current_user["_id"]): raise HTTPException(status_code=403, detail="You can only delete media from your own properties")
 
     media_list = prop.get("media", [])
     media_item = next((m for m in media_list if m["media_id"] == media_id), None)
