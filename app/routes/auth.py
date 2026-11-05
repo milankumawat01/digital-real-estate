@@ -26,10 +26,7 @@ MOBILE_REGEX = re.compile(r"^\+?[1-9]\d{9,14}$")
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserRegister):
     if not MOBILE_REGEX.match(user.mobile):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid mobile number format"
-        )
+        raise HTTPException(status_code=400, detail="Invalid mobile number format")
 
     email_lower = user.email.lower()
 
@@ -60,10 +57,7 @@ async def register(user: UserRegister):
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends()
-):
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     user = await user_collection.find_one({"email": form_data.username.lower()})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -72,36 +66,21 @@ async def login(
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.get("status") in ["suspended", "banned"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Your account has been suspended. Contact support."
-        )
+        raise HTTPException(status_code=403, detail="Your account has been suspended. Contact support.")
 
-    token = create_access_token({
-        "sub": str(user["_id"]),
-        "email": user["email"],
-        "role": user["role"]
-    })
+    token = create_access_token({"sub": str(user["_id"]), "email": user["email"], "role": user["role"]})
 
     return {
         "success": True,
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": str(user["_id"]),
-            "name": user["name"],
-            "email": user["email"],
-            "role": user["role"]
-        }
+        "user": {"id": str(user["_id"]), "name": user["name"], "email": user["email"], "role": user["role"]}
     }
 
 
 @router.post("/login-json")
 @limiter.limit("5/minute")
-async def login_json(
-    request: Request,
-    payload: UserLogin
-):
+async def login_json(request: Request, payload: UserLogin):
     user = await user_collection.find_one({"email": payload.email.lower()})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -110,27 +89,15 @@ async def login_json(
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.get("status") in ["suspended", "banned"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Your account has been suspended. Contact support."
-        )
+        raise HTTPException(status_code=403, detail="Your account has been suspended. Contact support.")
 
-    token = create_access_token({
-        "sub": str(user["_id"]),
-        "email": user["email"],
-        "role": user["role"]
-    })
+    token = create_access_token({"sub": str(user["_id"]), "email": user["email"], "role": user["role"]})
 
     return {
         "success": True,
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": str(user["_id"]),
-            "name": user["name"],
-            "email": user["email"],
-            "role": user["role"]
-        }
+        "user": {"id": str(user["_id"]), "name": user["name"], "email": user["email"], "role": user["role"]}
     }
 
 
@@ -150,71 +117,42 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="User not found")
 
     if user.get("status") in ["suspended", "banned"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Your account has been suspended."
-        )
+        raise HTTPException(status_code=403, detail="Your account has been suspended.")
 
     return user
 
 
 def require_seller(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") not in ["seller", "builder", "agent", "admin"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Only sellers, builders, agents, or admins can perform this action"
-        )
+        raise HTTPException(status_code=403, detail="Only sellers, builders, agents, or admins can perform this action")
     return current_user
 
 
 def require_buyer(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "buyer":
-        raise HTTPException(
-            status_code=403,
-            detail="Only buyers can perform this action"
-        )
+        raise HTTPException(status_code=403, detail="Only buyers can perform this action")
     return current_user
 
 
 @router.post("/send-otp")
 @limiter.limit("5/hour")
 async def send_otp(request: Request, payload: SendOTPRequest):
-    otp = await create_otp(payload.destination, payload.purpose)
-
-    return {
-        "message": "OTP sent",
-        "expires_in": 300
-    }
+    await create_otp(payload.destination, payload.purpose)
+    return {"message": "OTP sent", "expires_in": 300}
 
 
 @router.post("/verify-otp")
 async def verify_otp(payload: VerifyOTPRequest):
-    is_valid = await verify_otp_code(
-        payload.destination,
-        payload.otp,
-        payload.purpose
-    )
-
+    is_valid = await verify_otp_code(payload.destination, payload.otp, payload.purpose)
     if not is_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     if payload.purpose == "registration":
-        user = await user_collection.find_one({
-            "$or": [
-                {"email": payload.destination},
-                {"mobile": payload.destination}
-            ]
-        })
+        user = await user_collection.find_one({"$or": [{"email": payload.destination}, {"mobile": payload.destination}]})
         if user:
-            await user_collection.update_one(
-                {"_id": user["_id"]},
-                {"$set": {"is_verified": True}}
-            )
+            await user_collection.update_one({"_id": user["_id"]}, {"$set": {"is_verified": True}})
 
-    return {
-        "verified": True,
-        "message": "OTP verified successfully"
-    }
+    return {"verified": True, "message": "OTP verified successfully"}
 
 
 @router.post("/forgot-password")
@@ -223,10 +161,7 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
     user = await user_collection.find_one({"email": payload.email.lower()})
 
     if not user:
-        return {
-            "success": True,
-            "message": "If this email is registered, a reset link has been sent."
-        }
+        return {"success": True, "message": "If this email is registered, a reset link has been sent."}
 
     token = generate_reset_token()
     token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -234,16 +169,10 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
 
     await user_collection.update_one(
         {"_id": user["_id"]},
-        {"$set": {
-            "reset_token_hash": token_hash,
-            "reset_token_expires": expires_at
-        }}
+        {"$set": {"reset_token_hash": token_hash, "reset_token_expires": expires_at}}
     )
 
-    return {
-        "success": True,
-        "message": "If this email is registered, a reset link has been sent."
-    }
+    return {"success": True, "message": "If this email is registered, a reset link has been sent."}
 
 
 @router.post("/verify-reset-token")
@@ -257,11 +186,7 @@ async def verify_reset_token(payload: VerifyResetTokenRequest):
     if user.get("reset_token_expires") and user["reset_token_expires"] < datetime.utcnow():
         raise HTTPException(status_code=400, detail="Token has expired")
 
-    return {
-        "success": True,
-        "message": "Token is valid",
-        "email": user["email"]
-    }
+    return {"success": True, "message": "Token is valid", "email": user["email"]}
 
 
 @router.post("/reset-password")
@@ -277,13 +202,7 @@ async def reset_password(payload: ResetPasswordRequest):
 
     await user_collection.update_one(
         {"_id": user["_id"]},
-        {
-            "$set": {"password": hash_password(payload.new_password)},
-            "$unset": {"reset_token_hash": "", "reset_token_expires": ""}
-        }
+        {"$set": {"password": hash_password(payload.new_password)}, "$unset": {"reset_token_hash": "", "reset_token_expires": ""}}
     )
 
-    return {
-        "success": True,
-        "message": "Password reset successfully. You can now log in."
-}
+    return {"success": True, "message": "Password reset successfully. You can now log in."}

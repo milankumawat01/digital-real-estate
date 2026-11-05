@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
-from datetime import datetime, date
+from datetime import datetime
 
 from app.routes.auth import get_current_user, require_buyer
 from app.schemas.site_visit import SiteVisitCreate, SiteVisitUpdate
@@ -25,35 +25,8 @@ def site_visit_serializer(doc) -> dict:
     }
 
 
-def validate_visit_date_time(date_str: str, time_str: str):
-    try:
-        visit_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid date format. Use YYYY-MM-DD"
-        )
-
-    if visit_date < date.today():
-        raise HTTPException(
-            status_code=400,
-            detail="Visit date cannot be in the past"
-        )
-
-    try:
-        datetime.strptime(time_str, "%H:%M")
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid time format. Use HH:MM (24-hour)"
-        )
-
-
 @router.post("/")
-async def request_site_visit(
-    visit_data: SiteVisitCreate,
-    current_user: dict = Depends(require_buyer)
-):
+async def request_site_visit(visit_data: SiteVisitCreate, current_user: dict = Depends(require_buyer)):
     try:
         obj_id = ObjectId(visit_data.property_id)
     except Exception:
@@ -64,12 +37,7 @@ async def request_site_visit(
         raise HTTPException(status_code=404, detail="Property not found")
 
     if prop.get("seller_id") == str(current_user["_id"]):
-        raise HTTPException(
-            status_code=400,
-            detail="You cannot request a visit for your own property"
-        )
-
-    validate_visit_date_time(visit_data.date, visit_data.time)
+        raise HTTPException(status_code=400, detail="You cannot request a visit for your own property")
 
     existing = await site_visit_collection.find_one({
         "property_id": visit_data.property_id,
@@ -77,10 +45,7 @@ async def request_site_visit(
         "status": {"$in": ["pending", "approved", "rescheduled"]}
     })
     if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="You already have an active visit request for this property"
-        )
+        raise HTTPException(status_code=400, detail="You already have an active visit request for this property")
 
     doc = {
         "property_id": visit_data.property_id,
@@ -93,7 +58,6 @@ async def request_site_visit(
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
     }
-
     result = await site_visit_collection.insert_one(doc)
 
     await create_notification(
@@ -105,16 +69,11 @@ async def request_site_visit(
         reference_type="site_visit",
     )
 
-    return {
-        "id": str(result.inserted_id),
-        "status": "pending"
-    }
+    return {"id": str(result.inserted_id), "status": "pending"}
 
 
 @router.get("/")
-async def list_site_visits(
-    current_user: dict = Depends(get_current_user)
-):
+async def list_site_visits(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["_id"])
     role = current_user.get("role", "buyer")
 
@@ -125,23 +84,12 @@ async def list_site_visits(
     else:
         query = {"buyer_id": user_id}
 
-    results = []
-    cursor = site_visit_collection.find(query).sort("created_at", -1)
-
-    async for doc in cursor:
-        results.append(site_visit_serializer(doc))
-
-    return {
-        "count": len(results),
-        "results": results
-    }
+    results = [site_visit_serializer(doc) async for doc in site_visit_collection.find(query).sort("created_at", -1)]
+    return {"count": len(results), "results": results}
 
 
 @router.get("/{visit_id}")
-async def get_site_visit(
-    visit_id: str,
-    current_user: dict = Depends(get_current_user)
-):
+async def get_site_visit(visit_id: str, current_user: dict = Depends(get_current_user)):
     try:
         obj_id = ObjectId(visit_id)
     except Exception:
@@ -153,26 +101,15 @@ async def get_site_visit(
 
     user_id = str(current_user["_id"])
     role = current_user.get("role")
-    is_participant = (
-        visit.get("buyer_id") == user_id or
-        visit.get("seller_id") == user_id or
-        role == "admin"
-    )
+    is_participant = (visit.get("buyer_id") == user_id or visit.get("seller_id") == user_id or role == "admin")
     if not is_participant:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to view this site visit"
-        )
+        raise HTTPException(status_code=403, detail="You are not authorized to view this site visit")
 
     return site_visit_serializer(visit)
 
 
 @router.patch("/{visit_id}")
-async def update_site_visit(
-    visit_id: str,
-    update_data: SiteVisitUpdate,
-    current_user: dict = Depends(get_current_user)
-):
+async def update_site_visit(visit_id: str, update_data: SiteVisitUpdate, current_user: dict = Depends(get_current_user)):
     try:
         obj_id = ObjectId(visit_id)
     except Exception:
@@ -187,42 +124,23 @@ async def update_site_visit(
     is_seller = visit.get("seller_id") == user_id
     is_admin = role == "admin"
     if not (is_seller or is_admin):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the property seller or admin can update this site visit"
-        )
+        raise HTTPException(status_code=403, detail="Only the property seller or admin can update this site visit")
 
     update_fields = {k: v for k, v in update_data.dict().items() if v is not None}
-
     if not update_fields:
-        return {
-            "message": "No fields to update",
-            "updated_fields": []
-        }
+        return {"message": "No fields to update", "updated_fields": []}
 
     if "status" in update_fields:
         valid_statuses = ["approved", "rescheduled", "cancelled", "completed"]
         if update_fields["status"] not in valid_statuses:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Status must be one of: {valid_statuses}"
-            )
+            raise HTTPException(status_code=400, detail=f"Status must be one of: {valid_statuses}")
 
     if update_fields.get("status") == "rescheduled":
         if "date" not in update_fields or "time" not in update_fields:
-            raise HTTPException(
-                status_code=400,
-                detail="New date and time are required when rescheduling"
-            )
-        validate_visit_date_time(update_fields["date"], update_fields["time"])
+            raise HTTPException(status_code=400, detail="New date and time are required when rescheduling")
 
     update_fields["updated_at"] = datetime.utcnow()
-
-    await site_visit_collection.update_one(
-        {"_id": obj_id},
-        {"$set": update_fields}
-    )
-
+    await site_visit_collection.update_one({"_id": obj_id}, {"$set": update_fields})
     updated = await site_visit_collection.find_one({"_id": obj_id})
 
     notif_map = {
@@ -230,7 +148,6 @@ async def update_site_visit(
         "rescheduled": ("Site visit rescheduled ", "site_visit_requested"),
         "cancelled": ("Site visit cancelled ", "site_visit_cancelled"),
     }
-
     if update_fields.get("status") in notif_map:
         title, ntype = notif_map[update_fields["status"]]
         await create_notification(
@@ -242,7 +159,4 @@ async def update_site_visit(
             reference_type="site_visit",
         )
 
-    return {
-        "id": str(updated["_id"]),
-        "status": updated.get("status")
-    }
+    return {"id": str(updated["_id"]), "status": updated.get("status")}

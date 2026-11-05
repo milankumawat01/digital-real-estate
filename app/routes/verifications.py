@@ -112,7 +112,6 @@ async def update_verification(
         "rejected": PropertyStatus.REJECTED.value,
         "under_review": PropertyStatus.UNDER_VERIFICATION.value
     }
-
     new_prop_status = status_map.get(payload.status, PropertyStatus.UNDER_VERIFICATION.value)
 
     try:

@@ -7,7 +7,7 @@ import hashlib
 import os
 
 from app.routes.auth import get_current_user
-from app.schemas.payment import PaymentOrderCreate, PaymentVerify, PaymentWebhook
+from app.schemas.payment import PaymentOrderCreate, PaymentVerify
 from app.database import payment_collection, booking_collection
 from app.utils.notification_helper import create_notification
 
@@ -41,10 +41,7 @@ def payment_serializer(doc) -> dict:
 
 
 @router.post("/order")
-async def create_payment_order(
-    payload: PaymentOrderCreate,
-    current_user: dict = Depends(get_current_user)
-):
+async def create_payment_order(payload: PaymentOrderCreate, current_user: dict = Depends(get_current_user)):
     try:
         booking_obj_id = ObjectId(payload.booking_id)
     except Exception:
@@ -58,38 +55,24 @@ async def create_payment_order(
         raise HTTPException(status_code=403, detail="You can only pay for your own booking")
 
     if booking.get("status") != "payment_pending":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot pay for booking with status: {booking.get('status')}"
-        )
+        raise HTTPException(status_code=400, detail=f"Cannot pay for booking with status: {booking.get('status')}")
 
     total_paid = 0
-    async for p in payment_collection.find({
-        "booking_id": payload.booking_id,
-        "status": "paid"
-    }):
+    async for p in payment_collection.find({"booking_id": payload.booking_id, "status": "paid"}):
         total_paid += p.get("amount", 0)
 
     total_pending_orders = 0
-    async for p in payment_collection.find({
-        "booking_id": payload.booking_id,
-        "status": "created"
-    }):
+    async for p in payment_collection.find({"booking_id": payload.booking_id, "status": "created"}):
         total_pending_orders += p.get("amount", 0)
 
     remaining = booking["booking_amount"] - total_paid - total_pending_orders
-
     if payload.amount > remaining:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Amount exceeds remaining booking amount: ₹{remaining}"
-        )
+        raise HTTPException(status_code=400, detail=f"Amount exceeds remaining booking amount: ₹{remaining}")
 
     if payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
 
     gateway_order_id = f"order_{uuid.uuid4().hex[:16]}"
-
     now = datetime.utcnow()
     doc = {
         "booking_id": payload.booking_id,
@@ -101,21 +84,12 @@ async def create_payment_order(
         "created_at": now,
         "updated_at": now,
     }
-
     result = await payment_collection.insert_one(doc)
-
-    return {
-        "payment_id": str(result.inserted_id),
-        "gateway_order_id": gateway_order_id,
-        "status": "created"
-    }
+    return {"payment_id": str(result.inserted_id), "gateway_order_id": gateway_order_id, "status": "created"}
 
 
 @router.post("/verify")
-async def verify_payment(
-    payload: PaymentVerify,
-    current_user: dict = Depends(get_current_user)
-):
+async def verify_payment(payload: PaymentVerify, current_user: dict = Depends(get_current_user)):
     try:
         obj_id = ObjectId(payload.payment_id)
     except Exception:
@@ -134,50 +108,30 @@ async def verify_payment(
     if payment.get("gateway_order_id") != payload.gateway_order_id:
         raise HTTPException(status_code=400, detail="Order ID mismatch")
 
-    if not verify_gateway_signature(
-        payload.gateway_order_id,
-        payload.gateway_payment_id,
-        payload.signature
-    ):
+    if not verify_gateway_signature(payload.gateway_order_id, payload.gateway_payment_id, payload.signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     now = datetime.utcnow()
-    await payment_collection.update_one(
-        {"_id": obj_id},
-        {"$set": {
-            "status": "paid",
-            "gateway_payment_id": payload.gateway_payment_id,
-            "updated_at": now
-        }}
-    )
+    await payment_collection.update_one({"_id": obj_id}, {"$set": {"status": "paid", "gateway_payment_id": payload.gateway_payment_id, "updated_at": now}})
 
     total_paid = 0
-    async for p in payment_collection.find({
-        "booking_id": payment["booking_id"],
-        "status": "paid"
-    }):
+    async for p in payment_collection.find({"booking_id": payment["booking_id"], "status": "paid"}):
         total_paid += p.get("amount", 0)
 
     booking = await booking_collection.find_one({"_id": ObjectId(payment["booking_id"])})
     if booking and total_paid >= booking.get("booking_amount", 0):
-        await booking_collection.update_one(
-            {"_id": ObjectId(payment["booking_id"])},
-            {"$set": {"status": "confirmed", "updated_at": now}}
-        )
+        await booking_collection.update_one({"_id": ObjectId(payment["booking_id"])}, {"$set": {"status": "confirmed", "updated_at": now}})
 
     await create_notification(
         user_id=payment.get("buyer_id"),
-        title="Payment successful ",
+        title="Payment successful 💰",
         body=f"₹{payment.get('amount', 0):,} received",
         notif_type="payment_received",
         reference_id=payload.payment_id,
         reference_type="payment",
     )
 
-    return {
-        "payment_id": payload.payment_id,
-        "status": "paid"
-    }
+    return {"payment_id": payload.payment_id, "status": "paid"}
 
 
 @router.post("/webhook")
@@ -188,12 +142,7 @@ async def payment_webhook(request: Request):
     if not signature:
         raise HTTPException(status_code=401, detail="Missing signature header")
 
-    expected = hmac.new(
-        GATEWAY_SECRET.encode(),
-        raw_body,
-        hashlib.sha256
-    ).hexdigest()
-
+    expected = hmac.new(GATEWAY_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
@@ -221,18 +170,12 @@ async def payment_webhook(request: Request):
         return {"received": True, "note": "Payment not found"}
 
     now = datetime.utcnow()
-    await payment_collection.update_one(
-        {"_id": obj_id},
-        {"$set": {"status": status, "updated_at": now}}
-    )
+    await payment_collection.update_one({"_id": obj_id}, {"$set": {"status": status, "updated_at": now}})
 
     if status == "paid":
         try:
             booking_obj_id = ObjectId(payment["booking_id"])
-            await booking_collection.update_one(
-                {"_id": booking_obj_id},
-                {"$set": {"status": "confirmed", "updated_at": now}}
-            )
+            await booking_collection.update_one({"_id": booking_obj_id}, {"$set": {"status": "confirmed", "updated_at": now}})
         except Exception:
             pass
 
@@ -240,10 +183,7 @@ async def payment_webhook(request: Request):
 
 
 @router.get("/{payment_id}")
-async def get_payment(
-    payment_id: str,
-    current_user: dict = Depends(get_current_user)
-):
+async def get_payment(payment_id: str, current_user: dict = Depends(get_current_user)):
     try:
         obj_id = ObjectId(payment_id)
     except Exception:
