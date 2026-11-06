@@ -36,4 +36,6 @@ complaint_collection = database.get_collection("complaints")
 audit_log_collection = database.get_collection("audit_logs")
 admin_notification_collection = database.get_collection("admin_notifications")
 
+property_view_collection = database.get_collection("property_views")
+
 print(f"MongoDB connected successfully! Database: {DATABASE_NAME}")

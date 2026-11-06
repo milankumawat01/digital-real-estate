@@ -1,5 +1,6 @@
 import os
 import uuid
+import magic
 from datetime import datetime
 from fastapi import UploadFile
 
@@ -10,6 +11,17 @@ ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
 ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"]
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+ALLOWED_MAGIC_IMAGE = ["image/jpeg", "image/png", "image/webp"]
+ALLOWED_MAGIC_VIDEO = ["video/mp4", "video/webm", "video/quicktime"]
+
+
+def sniff_file_type(file_bytes: bytes) -> str:
+    try:
+        mime = magic.from_buffer(file_bytes[:2048], mime=True)
+        return mime or "application/octet-stream"
+    except Exception:
+        return "application/octet-stream"
 
 
 async def save_media_file(file: UploadFile, property_id: str, media_type: str) -> dict:
@@ -23,8 +35,17 @@ async def save_media_file(file: UploadFile, property_id: str, media_type: str) -
         raise ValueError(f"Invalid video type: {file.content_type}")
 
     contents = await file.read()
+
     if len(contents) > MAX_FILE_SIZE:
         raise ValueError(f"File too large. Max {MAX_FILE_SIZE // (1024 * 1024)} MB")
+
+    sniffed_mime = sniff_file_type(contents)
+
+    if media_type == "image" and sniffed_mime not in ALLOWED_MAGIC_IMAGE:
+        raise ValueError(f"File content does not match image (detected: {sniffed_mime})")
+
+    if media_type == "video" and sniffed_mime not in ALLOWED_MAGIC_VIDEO:
+        raise ValueError(f"File content does not match video (detected: {sniffed_mime})")
 
     ext = os.path.splitext(file.filename)[1] or ".bin"
     unique_name = f"{uuid.uuid4().hex}{ext}"
@@ -44,6 +65,7 @@ async def save_media_file(file: UploadFile, property_id: str, media_type: str) -
         "media_type": media_type,
         "filename": file.filename,
         "size": len(contents),
+        "detected_mime": sniffed_mime,
         "uploaded_at": datetime.utcnow().isoformat()
     }
 
